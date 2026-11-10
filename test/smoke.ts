@@ -49,7 +49,7 @@ try {
 
 const client = await connect({ Authorization: `Bearer ${token}` });
 const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-check("lists 7 tools", tools.length === 7, tools.join(", "));
+check("lists 9 tools", tools.length === 9, tools.join(", "));
 
 const dir = `_smoketest/${Date.now()}`;
 const note = `${dir}/Weekly plan æøå.md`;
@@ -89,6 +89,18 @@ r = await call(client, "search_notes", { query: "THIRD", folder: dir });
 check("search_notes case-insensitive", !r.isError && r.text.includes(":9:"), r.text);
 r = await call(client, "list_notes", { folder: dir });
 check("list_notes", !r.isError && r.text.includes("Weekly plan æøå.md"), r.text);
+
+r = await call(client, "recent_changes", { days: 1, folder: dir });
+check("recent_changes finds the new note", !r.isError && r.text.includes("Weekly plan æøå.md"), r.text);
+r = await call(client, "recent_changes", { days: 1, folder: "_smoketest/does-not-exist" });
+check("recent_changes on missing folder is an error", r.isError, r.text);
+
+r = await call(client, "week_progress", { folder: dir });
+check(
+  "week_progress counts tasks per note and section",
+  !r.isError && r.text.includes("1/3 (33%)") && r.text.includes("[week: 1]") && r.text.includes("Tasks: 1/3"),
+  r.text,
+);
 
 // Guardrails
 for (const [label, args] of [

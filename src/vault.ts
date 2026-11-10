@@ -30,7 +30,73 @@ export interface SearchHit {
   text: string;
 }
 
+export interface TaskSection {
+  heading: string;
+  done: number;
+  total: number;
+}
+
+export interface TaskSummary {
+  done: number;
+  total: number;
+  frontmatter: Record<string, string>;
+  sections: TaskSection[];
+}
+
 const MAX_FILES = 5000;
+
+const TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s/;
+const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
+
+/**
+ * Count Markdown task checkboxes (- [ ] and - [x]) in a note, grouped by the nearest heading above them.
+ * Code blocks are skipped. Simple "key: value" frontmatter lines are returned as well.
+ */
+export function countTasks(content: string): TaskSummary {
+  const lines = content.split("\n");
+  const frontmatter: Record<string, string> = {};
+  let i = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((l, idx) => idx > 0 && l.trim() === "---");
+    if (end > 0) {
+      for (const line of lines.slice(1, end)) {
+        const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
+        if (m) frontmatter[m[1]] = m[2].trim();
+      }
+      i = end + 1;
+    }
+  }
+
+  const sections: TaskSection[] = [];
+  let current: TaskSection | undefined;
+  let inCode = false;
+  for (; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*(```|~~~)/.test(line)) {
+      inCode = !inCode;
+      continue;
+    }
+    if (inCode) continue;
+    const heading = line.match(HEADING_LINE);
+    if (heading) {
+      sections.push((current = { heading: heading[2].trim(), done: 0, total: 0 }));
+      continue;
+    }
+    const task = line.match(TASK_LINE);
+    if (!task) continue;
+    if (!current) sections.push((current = { heading: "(no heading)", done: 0, total: 0 }));
+    current.total++;
+    if (task[1] !== " ") current.done++;
+  }
+
+  const withTasks = sections.filter((s) => s.total > 0);
+  return {
+    done: withTasks.reduce((n, s) => n + s.done, 0),
+    total: withTasks.reduce((n, s) => n + s.total, 0),
+    frontmatter,
+    sections: withTasks,
+  };
+}
 
 export function versionOf(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 12);
@@ -180,6 +246,26 @@ export class Vault {
       if (hits.length >= maxResults) break;
     }
     return hits.slice(0, maxResults);
+  }
+
+  /** Notes modified at or after `since`, newest first. */
+  async recent(folder: string, since: Date, maxResults: number): Promise<{ notes: NoteInfo[]; total: number }> {
+    const { notes } = await this.list(folder, true);
+    const changed = notes
+      .filter((n) => Date.parse(n.modified) >= since.getTime())
+      .sort((a, b) => b.modified.localeCompare(a.modified));
+    return { notes: changed.slice(0, maxResults), total: changed.length };
+  }
+
+  /** Task checkbox counts for every note below a folder that has at least one task. */
+  async taskProgress(folder: string, recursive: boolean): Promise<(TaskSummary & { path: string })[]> {
+    const { notes } = await this.list(folder, recursive);
+    const results: (TaskSummary & { path: string })[] = [];
+    for (const n of notes) {
+      const summary = countTasks((await this.read(n.path)).content);
+      if (summary.total > 0) results.push({ path: n.path, ...summary });
+    }
+    return results;
   }
 
   /** Write atomically: temp file in the same folder (hidden, so sync ignores it), then rename. */
