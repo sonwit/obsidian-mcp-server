@@ -182,6 +182,60 @@ export function createServer(vault: Vault): McpServer {
     ),
   );
 
+  server.registerTool(
+    "recent_changes",
+    {
+      title: "Recent changes",
+      description:
+        "List notes changed in the last N days, newest first, with modification time. Use this to see what the user (or another agent) has worked on lately, for example before a weekly review, instead of listing and reading the whole vault. Changes from every synced device count.",
+      inputSchema: {
+        days: z.number().positive().max(365).optional().describe("How far back to look, in days. Fractions are fine (0.5 = 12 hours). Default 7."),
+        folder: z.string().optional().describe("Limit to this folder. Omit for the whole vault."),
+        max_results: z.number().int().min(1).max(200).optional().describe("Default 50."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    tool(
+      "recent_changes",
+      async ({ days, folder, max_results }: { days?: number; folder?: string; max_results?: number }) => {
+        const d = days ?? 7;
+        const { notes, total } = await vault.recent(folder ?? "", new Date(Date.now() - d * 86_400_000), max_results ?? 50);
+        if (total === 0) return `No notes changed in the last ${d} days${folder ? ` in "${folder}"` : ""}.`;
+        const lines = [
+          `${total} note(s) changed in the last ${d} days${notes.length < total ? `, showing the ${notes.length} newest` : ""}:`,
+          ...notes.map((n) => `- ${n.path}  (modified ${n.modified})`),
+        ];
+        return lines.join("\n");
+      },
+    ),
+  );
+
+  server.registerTool(
+    "week_progress",
+    {
+      title: "Task progress",
+      description:
+        'Count task checkboxes (- [ ] open, - [x] done) in every note in a folder, per note and per heading section, plus the note\'s frontmatter fields (such as status and deadline). Use this to answer "how far am I this week?" or to find what is left, without reading every note. Notes without tasks are left out. Read a note afterwards to see which tasks are open.',
+      inputSchema: {
+        folder: z.string().describe('Folder with the notes to count, e.g. "NDC AI/Plan".'),
+        recursive: z.boolean().optional().describe("Include subfolders. Default true."),
+      },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    tool("week_progress", async ({ folder, recursive }: { folder: string; recursive?: boolean }) => {
+      const results = await vault.taskProgress(folder, recursive ?? true);
+      if (results.length === 0) return `No tasks found in "${folder}".`;
+      const pct = (done: number, total: number) => `${done}/${total} (${Math.round((100 * done) / total)}%)`;
+      return results
+        .map((r) => {
+          const fm = Object.entries(r.frontmatter).map(([k, v]) => `${k}: ${v}`).join(", ");
+          const sections = r.sections.map((s) => `  ${s.heading}: ${s.done}/${s.total}`);
+          return [`${r.path}  ${pct(r.done, r.total)}${fm ? `  [${fm}]` : ""}`, ...sections].join("\n");
+        })
+        .join("\n\n");
+    }),
+  );
+
   server.registerResource(
     "vault-index",
     "vault://index",
