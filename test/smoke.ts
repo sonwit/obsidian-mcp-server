@@ -49,7 +49,7 @@ try {
 
 const client = await connect({ Authorization: `Bearer ${token}` });
 const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-check("lists 9 tools", tools.length === 9, tools.join(", "));
+check("lists 11 tools", tools.length === 11, tools.join(", "));
 
 const dir = `_smoketest/${Date.now()}`;
 const note = `${dir}/Weekly plan æøå.md`;
@@ -94,6 +94,22 @@ r = await call(client, "recent_changes", { days: 1, folder: dir });
 check("recent_changes finds the new note", !r.isError && r.text.includes("Weekly plan æøå.md"), r.text);
 r = await call(client, "recent_changes", { days: 1, folder: "_smoketest/does-not-exist" });
 check("recent_changes on missing folder is an error", r.isError, r.text);
+
+r = await call(client, "archive_note", { path: note });
+const archived = r.text.match(/^to: (.+)$/m)?.[1] ?? "";
+check("archive_note moves the note to _arkiv/<date>/", !r.isError && /^_arkiv\/\d{4}-\d{2}-\d{2}\//.test(archived), r.text);
+r = await call(client, "archive_note", { path: archived });
+check("archive_note refuses an archived note", r.isError, r.text);
+r = await call(client, "restore_note", { path: archived });
+check("restore_note moves it back", !r.isError && r.text.includes(`to: ${note}`), r.text);
+r = await call(client, "restore_note", { path: note });
+check("restore_note refuses a note outside the archive", r.isError, r.text);
+r = await call(client, "list_notes", { folder: "_arkiv" });
+check("restore_note leaves no empty folders in _arkiv", !r.text.includes(dir), r.text);
+const meta = `${dir}/Om test.md`;
+await call(client, "create_note", { path: meta, content: "---\ntype: meta\n---\n# Om test\n" });
+r = await call(client, "archive_note", { path: meta });
+check("archive_note refuses meta notes", r.isError, r.text);
 
 r = await call(client, "week_progress", { folder: dir });
 check(

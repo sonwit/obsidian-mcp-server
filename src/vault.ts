@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -8,7 +8,7 @@ import path from "node:path";
  * - paths are relative to the vault and can never leave it (no "..", no absolute paths, no symlink escapes)
  * - hidden files and folders (.obsidian, .trash, .git, ...) are invisible and untouchable
  * - only Markdown notes (.md) can be read or written
- * - nothing is ever deleted or moved
+ * - nothing is ever deleted; notes can only be moved to and from the archive folder (_arkiv/)
  */
 
 export class VaultError extends Error {}
@@ -43,10 +43,24 @@ export interface TaskSummary {
   sections: TaskSection[];
 }
 
+const ARCHIVE = "_arkiv";
+
 const MAX_FILES = 5000;
 
 const TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s/;
 const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
+
+export function parseFrontmatter(content: string): Record<string, string> {
+  const lines = content.split("\n");
+  const result: Record<string, string> = {};
+  if (lines[0]?.trim() !== "---") return result;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  for (const line of lines.slice(1, end > 0 ? end : 1)) {
+    const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
+    if (m) result[m[1]] = m[2].trim();
+  }
+  return result;
+}
 
 /**
  * Count Markdown task checkboxes (- [ ] and - [x]) in a note, grouped by the nearest heading above them.
@@ -54,17 +68,11 @@ const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
  */
 export function countTasks(content: string): TaskSummary {
   const lines = content.split("\n");
-  const frontmatter: Record<string, string> = {};
+  const frontmatter = parseFrontmatter(content);
   let i = 0;
   if (lines[0]?.trim() === "---") {
     const end = lines.findIndex((l, idx) => idx > 0 && l.trim() === "---");
-    if (end > 0) {
-      for (const line of lines.slice(1, end)) {
-        const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
-        if (m) frontmatter[m[1]] = m[2].trim();
-      }
-      i = end + 1;
-    }
+    if (end > 0) i = end + 1;
   }
 
   const sections: TaskSection[] = [];
@@ -362,5 +370,68 @@ export class Vault {
     lines.splice(insertAt, 0, ...toInsert, ...(needsGapAfter ? [""] : []));
     await this.writeAtomic(await this.resolve(this.segments(relPath)), lines.join("\n"));
     return this.read(relPath);
+  }
+
+  /** Move a note. Both paths must already be resolved and checked. Removes empty folders left behind inside the archive. */
+  private async move(fromAbs: string, toAbs: string): Promise<{ from: string; to: string }> {
+    await mkdir(path.dirname(toAbs), { recursive: true });
+    this.assertInside(path.dirname(toAbs));
+    await rename(fromAbs, toAbs);
+
+    const archiveRoot = path.join(this.root, ARCHIVE);
+    let dir = path.dirname(fromAbs);
+    while (dir.startsWith(archiveRoot + path.sep)) {
+      if ((await readdir(dir)).length > 0) break;
+      await rmdir(dir);
+      dir = path.dirname(dir);
+    }
+
+    return { from: this.toRel(fromAbs), to: this.toRel(toAbs) };
+  }
+
+  async archive(relPath: string): Promise<{ from: string; to: string }> {
+    const note = await this.read(relPath);
+    const parts = this.segments(note.path);
+
+    if (parts[0] === ARCHIVE) {
+      throw new VaultError(`"${relPath}" is already archived.`);
+    }
+    if (parseFrontmatter(note.content).type === "meta") {
+      throw new VaultError(
+        `"${relPath}" describes how the vault works and cannot be archived. Ask the user to move it in Obsidian.`,
+      );
+    }
+
+    const day = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD i serverens tidssone
+    const toParts = [ARCHIVE, day, ...parts];
+    let toAbs = await this.resolve(toParts);
+    if (existsSync(toAbs)) {
+      const time = new Date().toTimeString().slice(0, 8).replace(/:/g, ""); // f.eks. 120512
+      toParts[toParts.length - 1] = parts[parts.length - 1].replace(/\.md$/i, ` ${time}.md`);
+      toAbs = await this.resolve(toParts);
+    }
+
+    const fromAbs = await this.resolve(parts);
+    return this.move(fromAbs, toAbs);
+  }
+
+  async restore(relPath: string): Promise<{ from: string; to: string }> {
+    const note = await this.read(relPath);
+    const parts = this.segments(note.path);
+
+    if (parts[0] !== ARCHIVE || parts.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[1])) {
+      throw new VaultError(`"${relPath}" is not an archived note. Archived notes look like "_arkiv/2026-11-10/Folder/Note.md".`);
+    }
+
+    const toParts = parts.slice(2);
+    let toAbs = await this.resolve(toParts);
+    if (existsSync(toAbs)) {
+      const time = new Date().toTimeString().slice(0, 8).replace(/:/g, ""); // f.eks. 120512
+      toParts[toParts.length - 1] = parts[parts.length - 1].replace(/\.md$/i, ` ${time}.md`);
+      toAbs = await this.resolve(toParts);
+    }
+
+    const fromAbs = await this.resolve(parts);
+    return this.move(fromAbs, toAbs);
   }
 }
