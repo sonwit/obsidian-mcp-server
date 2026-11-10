@@ -254,7 +254,7 @@ export function createServer(vault: Vault): McpServer {
     })
   );
 
-    server.registerTool(
+  server.registerTool(
     "restore_note",
     {
       title: "Restore note",

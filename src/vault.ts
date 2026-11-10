@@ -50,24 +50,26 @@ const MAX_FILES = 5000;
 const TASK_LINE = /^\s*[-*+]\s+\[([ xX])\]\s/;
 const HEADING_LINE = /^(#{1,6})\s+(.*)$/;
 
+export function parseFrontmatter(content: string): Record<string, string> {
+  const lines = content.split("\n");
+  const result: Record<string, string> = {};
+  if (lines[0]?.trim() !== "---") return result;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  for (const line of lines.slice(1, end > 0 ? end : 1)) {
+    const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
+    if (m) result[m[1]] = m[2].trim();
+  }
+  return result;
+}
+
 /**
  * Count Markdown task checkboxes (- [ ] and - [x]) in a note, grouped by the nearest heading above them.
  * Code blocks are skipped. Simple "key: value" frontmatter lines are returned as well.
  */
 export function countTasks(content: string): TaskSummary {
   const lines = content.split("\n");
-  const frontmatter: Record<string, string> = {};
   let i = 0;
-  if (lines[0]?.trim() === "---") {
-    const end = lines.findIndex((l, idx) => idx > 0 && l.trim() === "---");
-    if (end > 0) {
-      for (const line of lines.slice(1, end)) {
-        const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
-        if (m) frontmatter[m[1]] = m[2].trim();
-      }
-      i = end + 1;
-    }
-  }
+  const frontmatter = parseFrontmatter(content);
 
   const sections: TaskSection[] = [];
   let current: TaskSection | undefined;
@@ -104,17 +106,6 @@ export function versionOf(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 12);
 }
 
-export function parseFrontmatter(content: string): Record<string, string> {
-  const lines = content.split("\n");
-  const result: Record<string, string> = {};
-  if (lines[0]?.trim() !== "---") return result;
-  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  for (const line of lines.slice(1, end > 0 ? end : 1)) {
-    const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
-    if (m) result[m[1]] = m[2].trim();
-  }
-  return result;
-}
 
 export class Vault {
   readonly root: string;
@@ -384,7 +375,7 @@ export class Vault {
     this.assertInside(path.dirname(toRelAbs));
     await rename(fromAbs, toRelAbs);
 
-    return { from: fromAbs, to: this.toRel(toRelAbs) };
+    return { from: this.toRel(fromAbs), to: this.toRel(toRelAbs) };
   }
 
   async archive(relPath: string): Promise<{ from: string; to: string }> {
@@ -418,8 +409,8 @@ export class Vault {
     const note = await this.read(relPath);
     const parts = this.segments(note.path);
 
-    if (parts[0] !== ARCHIVE) {
-      throw new VaultError(`"${relPath}" is not in the archive.`);
+    if (parts[0] !== ARCHIVE || parts.length < 3 || !/^\d{4}-\d{2}-\d{2}$/.test(parts[1])) {
+      throw new VaultError(`"${relPath}" is not an archived note. Archived notes look like "_arkiv/2026-11-10/Folder/Note.md".`);
     }
 
     const toParts = [...parts.slice(2, parts.length)];
