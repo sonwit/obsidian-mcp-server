@@ -95,6 +95,11 @@ check("recent_changes finds the new note", !r.isError && r.text.includes("Weekly
 r = await call(client, "recent_changes", { days: 1, folder: "_smoketest/does-not-exist" });
 check("recent_changes on missing folder is an error", r.isError, r.text);
 
+r = await call(client, "archive_note", { path: note });
+check("archive_note", !r.isError, r.text);
+r = await call(client, "restore_note", { path: note });
+check("restore_note", !r.isError, r.text);
+
 r = await call(client, "week_progress", { folder: dir });
 check(
   "week_progress counts tasks per note and section",

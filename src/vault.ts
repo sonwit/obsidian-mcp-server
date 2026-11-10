@@ -11,7 +11,7 @@ import path from "node:path";
  * - nothing is ever deleted or moved
  */
 
-export class VaultError extends Error {}
+export class VaultError extends Error { }
 
 export interface NoteInfo {
   path: string;
@@ -42,6 +42,8 @@ export interface TaskSummary {
   frontmatter: Record<string, string>;
   sections: TaskSection[];
 }
+
+const ARCHIVE = "_arkiv";
 
 const MAX_FILES = 5000;
 
@@ -100,6 +102,18 @@ export function countTasks(content: string): TaskSummary {
 
 export function versionOf(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 12);
+}
+
+export function parseFrontmatter(content: string): Record<string, string> {
+  const lines = content.split("\n");
+  const result: Record<string, string> = {};
+  if (lines[0]?.trim() !== "---") return result;
+  const end = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
+  for (const line of lines.slice(1, end > 0 ? end : 1)) {
+    const m = line.match(/^([A-Za-zÆØÅæøå0-9_-]+):\s*(.+)$/);
+    if (m) result[m[1]] = m[2].trim();
+  }
+  return result;
 }
 
 export class Vault {
@@ -281,7 +295,7 @@ export class Vault {
       await writeFile(tmp, content, "utf8");
       await rename(tmp, abs);
     } catch (err) {
-      await unlink(tmp).catch(() => {});
+      await unlink(tmp).catch(() => { });
       throw err;
     }
   }
@@ -362,5 +376,63 @@ export class Vault {
     lines.splice(insertAt, 0, ...toInsert, ...(needsGapAfter ? [""] : []));
     await this.writeAtomic(await this.resolve(this.segments(relPath)), lines.join("\n"));
     return this.read(relPath);
+  }
+
+
+  async move(fromAbs: string, toRelAbs: string): Promise<{ from: string; to: string }> {
+    await mkdir(path.dirname(toRelAbs), { recursive: true });
+    this.assertInside(path.dirname(toRelAbs));
+    await rename(fromAbs, toRelAbs);
+
+    return { from: fromAbs, to: this.toRel(toRelAbs) };
+  }
+
+  async archive(relPath: string): Promise<{ from: string; to: string }> {
+    const note = await this.read(relPath);
+    const parts = this.segments(note.path);
+
+    if (parts[0] === ARCHIVE) {
+      throw new VaultError(`"${relPath}" is already archived.`);
+    }
+    if (parseFrontmatter(note.content).type === "meta") {
+      throw new VaultError(
+        `"${relPath}" describes how the vault works and cannot be archived. Ask the user to move it in Obsidian.`,
+      );
+    }
+
+    const day = new Date().toLocaleDateString("sv-SE"); // YYYY-MM-DD i serverens tidssone
+    const toParts = [ARCHIVE, day, ...parts];
+    let toAbs = await this.resolve(toParts);
+    if (existsSync(toAbs)) {
+      const time = new Date().toTimeString().slice(0, 8).replace(/:/g, ""); // f.eks. 120512
+      toParts[toParts.length - 1] = parts[parts.length - 1].replace(/\.md$/i, ` ${time}.md`);
+      toAbs = await this.resolve(toParts);
+    }
+
+    // 4. Flytt
+    const fromAbs = await this.resolve(parts);
+    return this.move(fromAbs, toAbs);
+  }
+
+  async restore(relPath: string): Promise<{ from: string; to: string }> {
+    const note = await this.read(relPath);
+    const parts = this.segments(note.path);
+
+    if (parts[0] !== ARCHIVE) {
+      throw new VaultError(`"${relPath}" is not in the archive.`);
+    }
+
+    const toParts = [...parts.slice(2, parts.length)];
+
+    let toAbs = await this.resolve(toParts);
+    if (existsSync(toAbs)) {
+      const time = new Date().toTimeString().slice(0, 8).replace(/:/g, ""); // f.eks. 120512
+      toParts[toParts.length - 1] = parts[parts.length - 1].replace(/\.md$/i, ` ${time}.md`);
+      toAbs = await this.resolve(toParts);
+    }
+
+    // 4. Flytt
+    const fromAbs = await this.resolve(parts);
+    return this.move(fromAbs, toAbs);
   }
 }

@@ -236,6 +236,42 @@ export function createServer(vault: Vault): McpServer {
     }),
   );
 
+  server.registerTool(
+    "archive_note",
+    {
+      title: "Archive note",
+      description: "Moves a not to the archive folder. Use if the user asks for a note to be deleated. Archived notes are places in the archive in a folder named with the date it was archived. We keep the rest of the file-path so restoreation to the previous location is easy. Archived files are automaticly deleated after 90 days",
+      inputSchema: { path: pathParam },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+    },
+    tool("archive_note", async ({ path }: { path: string }) => {
+      const res = await vault.archive(path);
+      // Format the result as a string for the tool's return type
+      if (res && typeof res === 'object' && 'from' in res && 'to' in res) {
+        return `Archived from: ${res.from}\nArchived to: ${res.to}`;
+      }
+      return typeof res === 'string' ? res : 'Archive operation completed.';
+    })
+  );
+
+    server.registerTool(
+    "restore_note",
+    {
+      title: "Restore note",
+      description: "Moves a note from the archive folder back to its original location. Use if the user asks for a note to be restored from the archive.",
+      inputSchema: { path: pathParam },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+    },
+    tool("restore_note", async ({ path }: { path: string }) => {
+      const res = await vault.restore(path);
+      // Format the result as a string for the tool's return type
+      if (res && typeof res === 'object' && 'from' in res && 'to' in res) {
+        return `Restored from: ${res.from}\nRestored to: ${res.to}`;
+      }
+      return typeof res === 'string' ? res : 'Restore operation completed.';
+    })
+  );
+
   server.registerResource(
     "vault-index",
     "vault://index",

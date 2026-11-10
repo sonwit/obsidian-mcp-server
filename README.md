@@ -15,6 +15,8 @@ An MCP server that gives AI agents read and write access to a single Obsidian va
 | `replace_note` | Overwrites the whole note, requires the version from the latest read |
 | `recent_changes` | Lists notes changed in the last N days, newest first |
 | `week_progress` | Counts task checkboxes per note and per heading in a folder, with frontmatter |
+| `archive` | Moves a note to the archive folder |
+| `restore` | Moves a note the archive folder to its original location |
 
 Plus the resource `vault://index`, which lists every note.
 
@@ -29,7 +31,7 @@ The server tells agents to read `About the vault.md` at the start of a session, 
 - Only `.md` files
 - No access to hidden files and folders (`.obsidian`, `.trash`)
 - No `..` or absolute paths, and symlinks cannot point outside the vault
-- No deleting or moving
+- The server can move files to the archive folder if the user ask for it. They can also be restored.
 - Atomic writes, at most 1 MB per write
 - The log shows which notes were touched, never their content
 
