@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rmdir, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -8,10 +8,10 @@ import path from "node:path";
  * - paths are relative to the vault and can never leave it (no "..", no absolute paths, no symlink escapes)
  * - hidden files and folders (.obsidian, .trash, .git, ...) are invisible and untouchable
  * - only Markdown notes (.md) can be read or written
- * - nothing is ever deleted or moved
+ * - nothing is ever deleted; notes can only be moved to and from the archive folder (_arkiv/)
  */
 
-export class VaultError extends Error { }
+export class VaultError extends Error {}
 
 export interface NoteInfo {
   path: string;
@@ -68,8 +68,12 @@ export function parseFrontmatter(content: string): Record<string, string> {
  */
 export function countTasks(content: string): TaskSummary {
   const lines = content.split("\n");
-  let i = 0;
   const frontmatter = parseFrontmatter(content);
+  let i = 0;
+  if (lines[0]?.trim() === "---") {
+    const end = lines.findIndex((l, idx) => idx > 0 && l.trim() === "---");
+    if (end > 0) i = end + 1;
+  }
 
   const sections: TaskSection[] = [];
   let current: TaskSection | undefined;
@@ -105,7 +109,6 @@ export function countTasks(content: string): TaskSummary {
 export function versionOf(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 12);
 }
-
 
 export class Vault {
   readonly root: string;
@@ -286,7 +289,7 @@ export class Vault {
       await writeFile(tmp, content, "utf8");
       await rename(tmp, abs);
     } catch (err) {
-      await unlink(tmp).catch(() => { });
+      await unlink(tmp).catch(() => {});
       throw err;
     }
   }
@@ -369,13 +372,21 @@ export class Vault {
     return this.read(relPath);
   }
 
+  /** Move a note. Both paths must already be resolved and checked. Removes empty folders left behind inside the archive. */
+  private async move(fromAbs: string, toAbs: string): Promise<{ from: string; to: string }> {
+    await mkdir(path.dirname(toAbs), { recursive: true });
+    this.assertInside(path.dirname(toAbs));
+    await rename(fromAbs, toAbs);
 
-  async move(fromAbs: string, toRelAbs: string): Promise<{ from: string; to: string }> {
-    await mkdir(path.dirname(toRelAbs), { recursive: true });
-    this.assertInside(path.dirname(toRelAbs));
-    await rename(fromAbs, toRelAbs);
+    const archiveRoot = path.join(this.root, ARCHIVE);
+    let dir = path.dirname(fromAbs);
+    while (dir.startsWith(archiveRoot + path.sep)) {
+      if ((await readdir(dir)).length > 0) break;
+      await rmdir(dir);
+      dir = path.dirname(dir);
+    }
 
-    return { from: this.toRel(fromAbs), to: this.toRel(toRelAbs) };
+    return { from: this.toRel(fromAbs), to: this.toRel(toAbs) };
   }
 
   async archive(relPath: string): Promise<{ from: string; to: string }> {
@@ -400,7 +411,6 @@ export class Vault {
       toAbs = await this.resolve(toParts);
     }
 
-    // 4. Flytt
     const fromAbs = await this.resolve(parts);
     return this.move(fromAbs, toAbs);
   }
@@ -413,8 +423,7 @@ export class Vault {
       throw new VaultError(`"${relPath}" is not an archived note. Archived notes look like "_arkiv/2026-11-10/Folder/Note.md".`);
     }
 
-    const toParts = [...parts.slice(2, parts.length)];
-
+    const toParts = parts.slice(2);
     let toAbs = await this.resolve(toParts);
     if (existsSync(toAbs)) {
       const time = new Date().toTimeString().slice(0, 8).replace(/:/g, ""); // f.eks. 120512
@@ -422,7 +431,6 @@ export class Vault {
       toAbs = await this.resolve(toParts);
     }
 
-    // 4. Flytt
     const fromAbs = await this.resolve(parts);
     return this.move(fromAbs, toAbs);
   }

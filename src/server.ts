@@ -12,7 +12,8 @@ How to work with it:
 - Read a note before changing it. Prefer edit_note (small, exact replacements) or append_to_note
   (add under a heading) over replace_note, so edits made on another device are not overwritten.
 - Keep YAML frontmatter, wiki links ([[Note]]) and task checkboxes (- [ ] / - [x]) intact.
-- Nothing can be deleted or moved through this server; ask the user to do that in Obsidian.
+- Notes cannot be deleted. If the user asks to delete a note, use archive_note: it moves the note to
+  _arkiv/<date>/<original path>, and restore_note moves it back. Other moves must be done in Obsidian.
 `.trim();
 
 function noteText(note: Note, includeContent = true): string {
@@ -240,36 +241,30 @@ export function createServer(vault: Vault): McpServer {
     "archive_note",
     {
       title: "Archive note",
-      description: "Moves a not to the archive folder. Use if the user asks for a note to be deleated. Archived notes are places in the archive in a folder named with the date it was archived. We keep the rest of the file-path so restoreation to the previous location is easy. Archived files are automaticly deleated after 90 days",
+      description:
+        'Move a note to the archive. Use this when the user asks to delete a note: notes cannot be deleted, but archiving hides them away and can be undone. The note goes to "_arkiv/<date>/<original path>", so restore_note can move it back. Notes describing the vault (frontmatter type: meta) cannot be archived. Wiki links to the note keep working as long as its file name is unique.',
       inputSchema: { path: pathParam },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     tool("archive_note", async ({ path }: { path: string }) => {
-      const res = await vault.archive(path);
-      // Format the result as a string for the tool's return type
-      if (res && typeof res === 'object' && 'from' in res && 'to' in res) {
-        return `Archived from: ${res.from}\nArchived to: ${res.to}`;
-      }
-      return typeof res === 'string' ? res : 'Archive operation completed.';
-    })
+      const { from, to } = await vault.archive(path);
+      return `Archived.\nfrom: ${from}\nto: ${to}`;
+    }),
   );
 
   server.registerTool(
     "restore_note",
     {
       title: "Restore note",
-      description: "Moves a note from the archive folder back to its original location. Use if the user asks for a note to be restored from the archive.",
+      description:
+        'Move an archived note back to where it was before it was archived. Takes the path inside the archive, like "_arkiv/2026-11-10/Folder/Note.md" (use list_notes on "_arkiv" to find it). If a note already exists at the original location, the restored note gets a time suffix in its name instead of overwriting it.',
       inputSchema: { path: pathParam },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     tool("restore_note", async ({ path }: { path: string }) => {
-      const res = await vault.restore(path);
-      // Format the result as a string for the tool's return type
-      if (res && typeof res === 'object' && 'from' in res && 'to' in res) {
-        return `Restored from: ${res.from}\nRestored to: ${res.to}`;
-      }
-      return typeof res === 'string' ? res : 'Restore operation completed.';
-    })
+      const { from, to } = await vault.restore(path);
+      return `Restored.\nfrom: ${from}\nto: ${to}`;
+    }),
   );
 
   server.registerResource(
