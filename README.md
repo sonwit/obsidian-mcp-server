@@ -52,6 +52,35 @@ Set as environment variables. See `.env.example` for a template.
 | `PORT` | `3333` | Port the server listens on |
 | `MAX_WRITE_BYTES` | `1000000` | Maximum size of a single write |
 
+## Docker
+
+CI publishes an image to `ghcr.io/sonwit/obsidian-mcp-server` on every push to `main`, tagged `main` and `sha-<short commit>`, with a build provenance attestation (`gh attestation verify oci://ghcr.io/sonwit/obsidian-mcp-server:main --owner sonwit`). Only `linux/amd64`.
+
+The image listens on `0.0.0.0:3333`, runs as a non-root user (`node`, 1000:1000) and works with a read-only root filesystem. The vault is mounted at `/vault`.
+
+```yaml
+services:
+  vault-mcp:
+    image: ghcr.io/sonwit/obsidian-mcp-server:main
+    user: "1000:1000"              # the owner of the vault files on the host
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /path/to/vault:/vault
+    secrets: [mcp_token]
+    environment:
+      MCP_TOKEN_FILE: /run/secrets/mcp_token
+    ports:
+      - "127.0.0.1:3333:3333"     # loopback only; put a reverse proxy with TLS in front
+secrets:
+  mcp_token:
+    file: ./mcp_token
+```
+
+The server needs no outbound network access, so it can sit on an internal Docker network behind the reverse proxy.
+
 ## Development
 
 Requires Node 22.18 or newer. The code runs as TypeScript directly, with no build step.
