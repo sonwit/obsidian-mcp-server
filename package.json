@@ -6,6 +6,7 @@
     "start": "node --env-file-if-exists=.env src/index.ts",
     "dev": "node --env-file-if-exists=.env --watch src/index.ts",
     "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
     "smoke": "node --env-file-if-exists=.env test/smoke.ts",
     "inspector": "npx @modelcontextprotocol/inspector"
   },
