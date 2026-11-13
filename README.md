@@ -47,9 +47,39 @@ Set as environment variables. See `.env.example` for a template.
 |---|---|---|
 | `VAULT_ROOT` | (required) | Path to the vault folder |
 | `MCP_TOKEN` | (required) | At least 32 characters, only `A-Z`, `a-z`, `0-9`, `_` and `-`. Generate one with `openssl rand -hex 32` |
+| `MCP_TOKEN_FILE` | | Read the token from this file instead, e.g. a Docker secret in `/run/secrets`. A trailing newline is removed. Setting both `MCP_TOKEN` and `MCP_TOKEN_FILE` is an error |
 | `HOST` | `127.0.0.1` | Address the server listens on |
 | `PORT` | `3333` | Port the server listens on |
 | `MAX_WRITE_BYTES` | `1000000` | Maximum size of a single write |
+
+## Docker
+
+CI publishes an image to `ghcr.io/sonwit/obsidian-mcp-server` on every push to `main`, tagged `main` and `sha-<short commit>`, with a build provenance attestation (`gh attestation verify oci://ghcr.io/sonwit/obsidian-mcp-server:main --owner sonwit`). Only `linux/amd64`.
+
+The image listens on `0.0.0.0:3333`, runs as a non-root user (`node`, 1000:1000) and works with a read-only root filesystem. The vault is mounted at `/vault`.
+
+```yaml
+services:
+  vault-mcp:
+    image: ghcr.io/sonwit/obsidian-mcp-server:main
+    user: "1000:1000"              # the owner of the vault files on the host
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    volumes:
+      - /path/to/vault:/vault
+    secrets: [mcp_token]
+    environment:
+      MCP_TOKEN_FILE: /run/secrets/mcp_token
+    ports:
+      - "127.0.0.1:3333:3333"     # loopback only; put a reverse proxy with TLS in front
+secrets:
+  mcp_token:
+    file: ./mcp_token
+```
+
+The server needs no outbound network access, so it can sit on an internal Docker network behind the reverse proxy.
 
 ## Development
 
@@ -60,6 +90,7 @@ npm install
 cp .env.example .env     # fill in VAULT_ROOT and MCP_TOKEN
 npm run dev
 npm run typecheck
+npm test
 npm run smoke            # against a running server, creates _smoketest in the vault
 npm run inspector        # Streamable HTTP, URL http://127.0.0.1:3333/mcp, header Authorization: Bearer ...
 ```
